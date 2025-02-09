@@ -169,10 +169,7 @@ def get_user_info():
 
 def process_oidc_callback(auth_code):
     """Process OIDC callback and fetch tokens."""
-    logger.info(f"Processing OIDC callback with auth_code: {auth_code}")
-
     if not auth_code:
-        logger.error("OIDC Authorization code missing")
         raise ValueError("Authorization code not provided")
 
     data = {
@@ -193,53 +190,43 @@ def process_oidc_callback(auth_code):
 
     id_token = token_response.get("id_token")
     access_token = token_response.get("access_token")
-
     if not id_token or not access_token:
-        logger.error("OIDC token response missing ID token or access token")
+        logger.error("Failed to retrieve tokens")
         raise ValueError("Failed to retrieve tokens")
 
     try:
         user_info = validate_id_token(id_token)
         user_email = user_info.get("email")
-        user_sub = user_info.get("sub")
-        logger.info(f"Decoded user email: {user_email}")
+        oidc_sub = user_info.get("sub")  # Extract OpenID subject ID
+        if not user_email:
+            raise ValueError("OIDC ID token missing email field")
     except Exception as e:
-        logger.error(f"ID Token validation failed: {str(e)}")
-        raise ValueError("Invalid ID Token")
+        logger.error(f"ID Token Validation Failed: {str(e)}")
+        raise ValueError("Invalid ID token")
 
-    if not user_email:
-        logger.error("User email not found in ID token")
-        raise ValueError("Email missing in ID Token")
+    # Check if user already exists
+    user = User.query.filter_by(email=user_email).first()
 
-    try:
-        # Check if user exists
-        user = User.query.filter_by(email=user_email).first()
-        if not user:
-            logger.info(f"Creating new OpenID user: {user_email}")
-            user = User(email=user_email, oidc_sub=user_sub)
+    if not user:
+        logger.info(f"Creating new OpenID user: {user_email}")
+        try:
+            user = User(email=user_email, password=None, oidc_sub=oidc_sub)
             db.session.add(user)
             db.session.commit()
-            logger.info(f"User {user_email} created successfully")
+            logger.info(f"OpenID User {user_email} created successfully")
+        except Exception as e:
+            logger.error(f"Database Insert Error: {str(e)}")
+            db.session.rollback()
+            raise ValueError("Database Error")
 
-        # Ensure user ID is valid before generating JWT
-        if not user.id:
-            logger.error(f"User {user_email} does not have a valid ID")
-            raise ValueError("Invalid User ID for JWT token generation")
+    jwt_token = create_access_token(identity=user.id)
 
-        # Generate JWT token
-        jwt_token = create_access_token(identity=user.id)
-        session["access_token"] = access_token  # Store OpenID access token securely
+    session["access_token"] = access_token
 
-        logger.info(f"User {user_email} authenticated successfully, JWT issued")
+    return {
+        "jwt_access_token": jwt_token,
+        "openid_access_token": access_token,
+        "email": user_email
+    }
 
-        return {
-            "jwt_access_token": jwt_token,
-            "openid_access_token": access_token,
-            "email": user_email
-        }
-
-    except Exception as e:
-        logger.error(f"Database or JWT Error: {str(e)}")
-        db.session.rollback()
-        raise ValueError("Internal Server Error")
 
