@@ -1,0 +1,22 @@
+requestBody:
+  required: true
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/UserRoleAssignmentRequest'
+security:
+  - bearerAuth: []
+responses:
+  201:
+    description: Role assigned successfully
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            user_id:
+              type: integer
+            role_id:
+              type: integer
+  400:
+    description: Invalid user or role ID

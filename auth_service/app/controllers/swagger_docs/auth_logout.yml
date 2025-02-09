@@ -1,0 +1,5 @@
+security:
+  - bearerAuth: []
+responses:
+  200:
+    description: User logged out successfully

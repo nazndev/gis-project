@@ -1,0 +1,14 @@
+responses:
+  200:
+    description: Permissions fetched successfully
+    content:
+      application/json:
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              permission_id:
+                type: integer
+              permission_name:
+                type: string

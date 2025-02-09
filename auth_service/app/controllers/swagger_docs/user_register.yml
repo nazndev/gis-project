@@ -1,0 +1,20 @@
+requestBody:
+  required: true
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/UserRegisterRequest'
+responses:
+  201:
+    description: User registered successfully
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            user_id:
+              type: integer
+            email:
+              type: string
+  400:
+    description: User already exists

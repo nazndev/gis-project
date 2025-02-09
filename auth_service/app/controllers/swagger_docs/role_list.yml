@@ -1,0 +1,14 @@
+responses:
+  200:
+    description: Roles fetched successfully
+    content:
+      application/json:
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              role_id:
+                type: integer
+              role_name:
+                type: string

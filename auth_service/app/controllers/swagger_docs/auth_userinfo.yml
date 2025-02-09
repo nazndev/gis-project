@@ -1,0 +1,16 @@
+security:
+  - bearerAuth: []
+responses:
+  200:
+    description: User info retrieved successfully
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            email:
+              type: string
+            name:
+              type: string
+  401:
+    description: Unauthorized

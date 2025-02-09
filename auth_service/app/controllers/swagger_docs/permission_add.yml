@@ -1,0 +1,20 @@
+requestBody:
+  required: true
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/PermissionCreateRequest'
+responses:
+  201:
+    description: Permission created successfully
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            permission_id:
+              type: integer
+            permission_name:
+              type: string
+  400:
+    description: Permission already exists

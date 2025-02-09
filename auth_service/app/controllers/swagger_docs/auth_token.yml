@@ -1,0 +1,24 @@
+requestBody:
+  required: true
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/TokenExchangeRequest'
+responses:
+  200:
+    description: Token exchange successful
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            jwt_access_token:
+              type: string
+            openid_access_token:
+              type: string
+            email:
+              type: string
+  400:
+    description: Invalid request data
+  401:
+    description: Invalid authorization code
