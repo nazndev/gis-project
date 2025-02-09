@@ -1,8 +1,10 @@
 import os
+import requests
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
+
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY")
@@ -17,5 +19,25 @@ class Config:
     OIDC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET")
     OIDC_REDIRECT_URI = os.getenv("OIDC_REDIRECT_URI")
 
-    if not OIDC_PROVIDER_URL:
-        raise ValueError("OIDC Provider URL is missing")
+    @classmethod
+    def load_oidc_config(cls):
+        """ Fetch OpenID configuration dynamically and set values. """
+        try:
+            if not cls.OIDC_PROVIDER_URL:
+                raise ValueError("OIDC_PROVIDER_URL is not set in environment variables.")
+
+            response = requests.get(f"{cls.OIDC_PROVIDER_URL}/.well-known/openid-configuration")
+            response.raise_for_status()
+            oidc_config = response.json()
+
+            cls.OIDC_AUTH_URL = oidc_config["authorization_endpoint"]
+            cls.OIDC_TOKEN_URL = oidc_config["token_endpoint"]
+            cls.OIDC_USERINFO_URL = oidc_config["userinfo_endpoint"]
+            cls.OIDC_JWKS_URI = oidc_config["jwks_uri"]
+
+        except requests.RequestException as e:
+            raise ValueError(f"Failed to retrieve OpenID configuration: {str(e)}")
+
+
+# Load OIDC Config only once after the class is defined
+Config.load_oidc_config()

@@ -61,8 +61,9 @@ def oidc_callback():
         logger.error(f"Unexpected Error: {str(e)}")
         return jsonify({"error": "Internal Server Error"}), 500
 
+
 def exchange_code_for_token(auth_code):
-    """ Exchange authorization code for access & ID tokens """
+    """ Exchange authorization code for tokens. """
     if not auth_code:
         raise ValueError("Authorization code is required")
 
@@ -78,8 +79,12 @@ def exchange_code_for_token(auth_code):
 
     try:
         response = requests.post(OIDC_TOKEN_URL, data=payload, headers=headers)
-        response.raise_for_status()
+        if response.status_code != 200:
+            logger.error(f"Token exchange failed: {response.text}")
+            raise ValueError("Failed to exchange code for token")
+
         token_data = response.json()
+
     except requests.RequestException as e:
         logger.error(f"Error exchanging code for token: {str(e)}")
         raise ValueError("Failed to exchange code for token")
@@ -89,34 +94,63 @@ def exchange_code_for_token(auth_code):
     if not id_token or not access_token:
         raise ValueError("Failed to retrieve ID token or access token")
 
-    user_email = validate_id_token(id_token)
+    user_info = validate_id_token(id_token)
+    user_email = user_info.get("email")
 
     user = User.query.filter_by(email=user_email).first()
     if not user:
-        user = User(email=user_email)
+        user = User(email=user_email, oidc_sub=user_info.get("sub"))
         db.session.add(user)
         db.session.commit()
 
     jwt_token = create_access_token(identity=user.id)
-    session["access_token"] = access_token  # Store OpenID access token securely
-    return {"jwt_access_token": jwt_token, "openid_access_token": access_token, "email": user_email}
+    return {
+        "jwt_access_token": jwt_token,
+        "openid_access_token": access_token,
+        "email": user_email
+    }
+
+
 
 def validate_id_token(id_token):
-    """Validate ID Token using OpenID public keys."""
+    """Validate and decode an OIDC ID Token."""
     try:
-        jwks = requests.get(OIDC_JWKS_URI).json()
-        public_keys = {key["kid"]: jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key)) for key in jwks["keys"]}
+        # Fetch Google public keys
+        jwks_url = Config.OIDC_JWKS_URI
+        jwks_response = requests.get(jwks_url)
+        jwks_response.raise_for_status()
+        jwks = jwks_response.json()
 
-        decoded_header = jwt.get_unverified_header(id_token)
-        public_key = public_keys.get(decoded_header["kid"])
-        if not public_key:
-            raise ValueError("Invalid token signature")
+        # Extract RSA public key
+        header = jwt.get_unverified_header(id_token)
+        rsa_key = None
 
-        decoded_token = jwt.decode(id_token, public_key, algorithms=["RS256"], audience=Config.OIDC_CLIENT_ID)
-        return decoded_token.get("email")
+        for key in jwks.get("keys", []):
+            if key.get("kid") == header.get("kid"):
+                rsa_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
+                break
+
+        if not rsa_key:
+            raise ValueError("No matching key found in JWKS")
+
+        # Decode JWT token
+        decoded_token = jwt.decode(
+            id_token,
+            key=rsa_key,
+            algorithms=["RS256"],
+            audience=Config.OIDC_CLIENT_ID
+        )
+
+        return decoded_token
+
+    except jwt.ExpiredSignatureError:
+        raise ValueError("ID Token has expired")
+    except jwt.InvalidTokenError:
+        raise ValueError("Invalid ID Token")
     except Exception as e:
-        logger.error(f"JWT validation failed: {str(e)}")
-        raise ValueError("Invalid ID token")
+        raise ValueError(f"ID Token Validation Failed: {str(e)}")
+
+
 
 @jwt_required()
 def get_user_info():
@@ -135,7 +169,10 @@ def get_user_info():
 
 def process_oidc_callback(auth_code):
     """Process OIDC callback and fetch tokens."""
+    logger.info(f"Processing OIDC callback with auth_code: {auth_code}")
+
     if not auth_code:
+        logger.error("OIDC Authorization code missing")
         raise ValueError("Authorization code not provided")
 
     data = {
@@ -147,7 +184,7 @@ def process_oidc_callback(auth_code):
     }
 
     try:
-        response = requests.post(OIDC_TOKEN_URL, data=data)
+        response = requests.post(Config.OIDC_TOKEN_URL, data=data)
         response.raise_for_status()
         token_response = response.json()
     except requests.RequestException as e:
@@ -156,17 +193,53 @@ def process_oidc_callback(auth_code):
 
     id_token = token_response.get("id_token")
     access_token = token_response.get("access_token")
+
     if not id_token or not access_token:
+        logger.error("OIDC token response missing ID token or access token")
         raise ValueError("Failed to retrieve tokens")
 
-    user_email = validate_id_token(id_token)
+    try:
+        user_info = validate_id_token(id_token)
+        user_email = user_info.get("email")
+        user_sub = user_info.get("sub")
+        logger.info(f"Decoded user email: {user_email}")
+    except Exception as e:
+        logger.error(f"ID Token validation failed: {str(e)}")
+        raise ValueError("Invalid ID Token")
 
-    user = User.query.filter_by(email=user_email).first()
-    if not user:
-        user = User(email=user_email)
-        db.session.add(user)
-        db.session.commit()
+    if not user_email:
+        logger.error("User email not found in ID token")
+        raise ValueError("Email missing in ID Token")
 
-    jwt_token = create_access_token(identity=user.id)
-    session["access_token"] = access_token  # Store OpenID access token securely
-    return {"jwt_access_token": jwt_token, "openid_access_token": access_token, "email": user_email}
+    try:
+        # Check if user exists
+        user = User.query.filter_by(email=user_email).first()
+        if not user:
+            logger.info(f"Creating new OpenID user: {user_email}")
+            user = User(email=user_email, oidc_sub=user_sub)
+            db.session.add(user)
+            db.session.commit()
+            logger.info(f"User {user_email} created successfully")
+
+        # Ensure user ID is valid before generating JWT
+        if not user.id:
+            logger.error(f"User {user_email} does not have a valid ID")
+            raise ValueError("Invalid User ID for JWT token generation")
+
+        # Generate JWT token
+        jwt_token = create_access_token(identity=user.id)
+        session["access_token"] = access_token  # Store OpenID access token securely
+
+        logger.info(f"User {user_email} authenticated successfully, JWT issued")
+
+        return {
+            "jwt_access_token": jwt_token,
+            "openid_access_token": access_token,
+            "email": user_email
+        }
+
+    except Exception as e:
+        logger.error(f"Database or JWT Error: {str(e)}")
+        db.session.rollback()
+        raise ValueError("Internal Server Error")
+

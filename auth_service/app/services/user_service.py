@@ -1,14 +1,14 @@
 from app.models.user_model import User, db
 from app.utils.security_util import hash_password
 
-def create_user(email, password):
-    """Create a new user with hashed password."""
+def create_user(email, password=None):
+    """Create a new user with optional password (for OpenID users)."""
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
         return None, "User already exists"
 
     try:
-        hashed_pw = hash_password(password)
+        hashed_pw = hash_password(password) if password else None  # Only hash if password exists
         user = User(email=email, password=hashed_pw)
         db.session.add(user)
         db.session.commit()

@@ -1,15 +1,14 @@
 from flask import request, jsonify
+from flask_jwt_extended import jwt_required
+from flasgger import swag_from
+from pydantic import ValidationError
 
 from app import db
-from app.models.role_model import Role
+from app.models.role_model import Role, user_role_mapping  # Ensure correct import
 from app.models.user_model import User
-from app.models.user_role_mapping import UserRoleMapping
 from app.services.user_service import create_user, get_user_by_email
 from app.utils.response_util import success_response, error_response
-from flask_jwt_extended import jwt_required
-from pydantic import ValidationError
 from app.schemas.user_schema import UserRegisterRequest, UserRoleAssignmentRequest
-from flasgger import swag_from
 
 @swag_from("swagger_docs/user_register.yml")
 def register_user():
@@ -20,16 +19,17 @@ def register_user():
     except ValidationError as e:
         return jsonify(error_response(f"Invalid request data: {e.errors()}")), 400
 
-    user = create_user(validated_data.email, validated_data.password)
-    if not user:
-        return jsonify(error_response("User already exists")), 400
+    user, error = create_user(validated_data.email, validated_data.password)
+    if error:
+        return jsonify(error_response(error)), 400
 
     return jsonify(success_response("User registered successfully", {"user_id": user.id, "email": user.email})), 201
+
 
 @jwt_required()
 @swag_from("swagger_docs/user_get.yml")
 def get_user():
-    """Get user details (Protected API)"""
+    """Get user details (Protected API)."""
     email = request.args.get("email")
     if not email:
         return jsonify(error_response("Email is required")), 400
@@ -40,9 +40,11 @@ def get_user():
 
     return jsonify(success_response("User found", {"user_id": user.id, "email": user.email})), 200
 
+
 @jwt_required()
 @swag_from("swagger_docs/user_assign_role.yml")
 def assign_role():
+    """Assign a role to a user."""
     try:
         data = request.get_json()
         validated_data = UserRoleAssignmentRequest(**data)
@@ -58,8 +60,12 @@ def assign_role():
     if not user or not role:
         return jsonify(error_response("Invalid user or role ID")), 400
 
-    mapping = UserRoleMapping(user_id=user_id, role_id=role_id)
-    db.session.add(mapping)
+    # Check if the user already has the role
+    if role in user.roles:
+        return jsonify(error_response("User already has this role assigned")), 400
+
+    # Assign the role
+    user.roles.append(role)
     db.session.commit()
 
     return jsonify(success_response("Role assigned successfully", {"user_id": user_id, "role_id": role_id})), 201
